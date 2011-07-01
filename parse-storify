@@ -1,0 +1,58 @@
+#!/usr/bin/env ruby
+
+require 'rubygems'
+require 'crack'
+require 'htmlentities'
+require 'json'
+require 'net/http'
+require 'trollop'
+
+# parse options
+options = Trollop::options do
+  opt :url, "URL of Storify JSON feed", :type => :string
+  opt :output, "Path to output file", :type => :string
+  opt :verbose, "Whether to be verbose"
+end
+
+Trollop::die :url, "is required" unless options[:url]
+Trollop::die :output, "is required" unless options[:output]
+
+def twitterize(s)
+  $coder ||= HTMLEntities.new
+  # hyperlinks
+  s.gsub! /((https?:\/\/|www\.)([-\w\.]+)+(:\d+)?(\/([\w\/_\.]*(\?\S+)?)?)?)/, %Q{<a target="_blank" href="\\1">\\1</a>}
+  # tweeter
+  s.gsub! /^([_\w]+)?: /, %Q{<a target="_blank" href="http://twitter.com/\\1">\\1</a>: }
+  # usernames
+  s.gsub! /@(\w+)/, %Q{@<a target="_blank" href="http://twitter.com/\\1">\\1</a>}
+  # hashtag
+  s.gsub! /#(\w+)/, %Q{<a target="_blank" href="http://search.twitter.com/search?q=%23\\1">#\\1</a>}
+  $coder.decode(s);
+end
+
+resp = Net::HTTP.get_response(URI.parse(options[:url]))
+if resp.instance_of?(Net::HTTPOK)
+  data = resp.body
+  feed = Crack::JSON.parse(data)
+else
+  puts "Failed to fetch URL: " + resp if options[:verbose]
+  exit
+end
+
+output = []
+feed['elements'].each do |key, e|
+  next if key.to_i > 20
+  author = %Q{<a target="_blank" href="#{e['author']['href']}">#{e['author']['username']}</a>:}
+  content = twitterize(e['description'])
+  output[key.to_i] = { 'content' => author + " " + content }
+end
+
+begin
+  File.open(options[:output], 'w') do |f|
+    f.puts(output.to_json)
+  end
+rescue Exception => e
+  puts "Failed to write output file: #{e.message}"
+end
+
+
